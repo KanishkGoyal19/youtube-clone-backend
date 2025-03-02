@@ -106,4 +106,74 @@ const registerUser = asyncHandler(async (req, res) => {
     }
 });
 
-export { registerUser }
+const generateAccessandRefreshToken = async (userId) => {
+    try {
+        const user = await User.findById(userId)
+        if (!user) {
+            throw new ApiError(404, "User does not exist")
+        }
+        const accessToken = user.generateRefreshToken()
+        const refreshToken = user.generateAccessToken()
+
+        user.refreshToken = refreshToken
+        await user.save({ validateBeforeSave: false })
+        return { accessToken, refreshToken }
+    } catch (error) {
+        throw new ApiError(500, 'Something went wrong while generating access and refresh token')
+
+    }
+
+}
+
+const loginUser = asyncHandler(async (req, res) => {
+    const { email, username, password } = req.body;
+  
+    // Input validation: Ensure either email or username and password are provided
+    if ((!email && !username) || !password) {
+      throw new ApiError(400, "Either email or username and password are required.");
+    }
+  
+    // If email is provided, validate its format using a regular expression.
+    // The regex below checks for a basic email format.
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new ApiError(400, "Invalid email format.");
+    }
+  
+    // Query the database using trimmed values for consistency
+    const user = await User.findOne({
+      $or: [{ username: username ? username.trim() : undefined }, { email: email ? email.trim() : undefined }]
+    });
+    if (!user) {
+      throw new ApiError(404, "User Not Found");
+    }
+  
+    const isPasswordCorrect = await user.isPasswordCorrect(password);
+    if (!isPasswordCorrect) {
+      throw new ApiError(401, "Invalid Credentials");
+    }
+  
+    const { accessToken, refreshToken } = await generateAccessandRefreshToken(user._id);
+  
+    const loggedInUser = await User.findById(user._id).select("-password -refreshToken");
+  
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production"
+    };
+  
+    return res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", refreshToken, options)
+      .json(new ApiResponse(
+        200,
+        { user: loggedInUser, accessToken, refreshToken },
+        "User logged in succesfully"
+      ));
+  });
+  
+
+export { 
+    registerUser,
+    loginUser
+ }
